@@ -1,0 +1,32 @@
+digraph lisp_solution {
+    compound=true;
+    subgraph cluster_0 {
+        label="Source";
+        pdf;
+        djvu;
+        others[label="..."];
+    }
+    subgraph cluster_1 {
+        label="toc-glue.el"
+        color="red"
+        toc[label="toc"];
+        lisp[label="lisp (simple outline)"];
+        djvu_lisp[label="lisp (djvulibre outline)"];
+        lisp_ed[label="simple-outline-shift\n...",shape="box"]
+    }
+    subgraph cluster_2 {
+        label="Backends";
+        djvu_backend[label="djvused",shape="box"];
+        pdf_backend[label="pdf-outline",shape="box"];
+        other_backend[label="...",shape="box"];
+    }
+
+    djvu -> toc[label="doc-toc-extract-outline\n(doc-toc.el)",ltail=cluster_0];
+    toc -> lisp [label="toc-to-lisp"];
+    lisp -> toc [label="lisp-to-toc"];
+    lisp_ed -> lisp [label="edit"];
+    djvu_lisp -> lisp [label="djvu-outline-simplify"];
+    lisp -> djvu_lisp [label="lisp-to-djvu-outline"];
+    djvu_lisp -> djvu_backend [label="set-outline", lhead=cluster_2];
+    pdf_backend -> djvu_lisp [label="get-outline", ltail=cluster_2];
+ }
