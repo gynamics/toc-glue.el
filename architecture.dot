@@ -21,12 +21,12 @@ digraph lisp_solution {
         other_backend[label="...",shape="box"];
     }
 
-    djvu -> toc[label="doc-toc-extract-outline\n(doc-toc.el)",ltail=cluster_0];
+    djvu -> toc[label="doc-toc-extract-pages-ocr\n(doc-toc.el)",ltail=cluster_0];
     toc -> lisp [label="toc-to-lisp"];
     lisp -> toc [label="lisp-to-toc"];
     lisp_ed -> lisp [label="edit"];
     djvu_lisp -> lisp [label="djvu-outline-simplify"];
-    lisp -> djvu_lisp [label="lisp-to-djvu-outline"];
+    lisp -> djvu_lisp [label="simple-outline-to-djvu"];
     djvu_lisp -> djvu_backend [label="set-outline", lhead=cluster_2];
     pdf_backend -> djvu_lisp [label="get-outline", ltail=cluster_2];
  }
