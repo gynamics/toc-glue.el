@@ -22,6 +22,17 @@ If you want to edit ToC in Emacs, the first step will be convert it to a lisp st
 
 Currently I only implemented a minimal set of elisp functions for format converting as described above. These functions are just enough for one to use, but not that smoothly. It does not own a safe buffer or mode, but directly prints to `*Messages*` buffer. You can create a wrapper to yank the output to kill-ring to avoid copying across buffers.
 
+I have defined a macro `toc-glue:def-interactive` which converts these functions into interactive function definitions. You can access these functions with prefix `toc-glue:`. The default behavior of these interactive functions are replace in place, and a `C-u` prefix you will be able to select a buffer for output.
+
+- `toc-glue:simple-outline-to-djvu`
+- `toc-glue:simple-outline-shift`
+- `toc-glue:toc-to-lisp`
+- `toc-glue:lisp-to-toc`
+- `toc-glue:djvu-outline-shift`
+- `toc-glue:djvu-outline-simplify`
+
+I don't have good ideas about UI, if you have a better idea, I will be happy to know it!
+
 ## Example
 
 Suppose we have a pdf file `sicp.pdf` with wrong page numbers in outline.
@@ -49,17 +60,9 @@ In Emacs, let's edit `sicp-outline.lisp` in a buffer, you may found like a subtr
 This subtree has wrong page numbers, which shifted forward by 1 from the correct page numbers. Let's correct it by:
 
 - Move cursor to the start/end of this list, `lisp.el` provides related moving functions binded in `esc-map` by default.
-- `M-x djvu-outline-shift RET`, it will prompt for a number as offset, input `-1 RET`.
+- `M-x toc-glue:djvu-outline-shift RET`, it will prompt for a number as offset, input `-1 RET`.
 
-And you will find ... nothing happened! That is because, by default, outline utility functions return results rather than printing them, you can create an interactive wrapper to catch the output, e. g.
-
-``` emacs-lisp
-    (defun pp-value-to-kill-ring (cmd)
-      (interactive "aCommand: ")
-      (kill-new (pp (call-interactively cmd))))
-```
-
-Run `M-x pp-value-to-kill-ring RET djvu-outline-shift RET -1 RET` you will get this on your kill-ring:
+Then you will find it becomes:
 
 ``` emacs-lisp
         ("The Elements of Programming" "#34"
@@ -74,12 +77,18 @@ Run `M-x pp-value-to-kill-ring RET djvu-outline-shift RET -1 RET` you will get t
         )
 ```
 
-Now you can replace the wrong subtree with the corrected one!
-
 Finally, write the outline back to `sicp.pdf`, save it in `sicp-corrected.pdf`:
 
 ``` shell
     ./pdf-set-outline.py sicp-corrected.pdf sicp-outline.lisp sicp.pdf
 ```
 
-I don't have good ideas about UI, if you have a good idea, I will be happy to know it!
+You can also create your own interactive wrappers to catch the output, e. g.
+
+``` emacs-lisp
+    (defun pp-value-to-kill-ring (cmd)
+      (interactive "aCommand: ")
+      (kill-new (pp (call-interactively cmd))))
+```
+
+Run `M-x pp-value-to-kill-ring RET djvu-outline-shift RET -1 RET` you will get this on your kill-ring:
