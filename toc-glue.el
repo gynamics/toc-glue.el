@@ -99,8 +99,6 @@
 
 (defun djvu-outline-shift (lst offset)
   "Add OFFSET to each page number in djvulibre outline LST."
-  (interactive (list (sexp-at-point)
-                     (read-number "Offset value: ")))
   (if (listp lst)
       (djvu-outline-map
        lst
@@ -114,17 +112,11 @@
 
 (defun djvu-outline-simplify (lst)
   "Simplify djvulibre outline LST to a simple outline."
-  (interactive (list (sexp-at-point)))
-  (if (listp lst)
-      (djvu-outline-map
-       lst
-       (lambda (first second)
-         (list first
-               ((lambda (numstr)
-                  (string-to-number
-                   (substring numstr 1)))
-                second))))
-    (error "Last sexp is not a list!")))
+  (djvu-outline-map
+   lst
+   (lambda (first second)
+     (list first
+           (string-to-number (substring second 1))))))
 
 (defun simple-outline-map (lst func)
   "Map FUNC to each (title number) pair in simple outline LST."
@@ -139,7 +131,7 @@
    ;; if the list has at least two elements
    ((and (>= (length lst) 2)
          ;; check if elements are valid
-         (stringp (cadr lst))
+         (stringp (car lst))
          (numberp (cadr lst)))
     (let* ((first (car lst))
            (second (cadr lst))
@@ -153,25 +145,19 @@
    ;; Otherwise, raise an error
    (t (error "Invalid simple outline structure, %S" lst))))
 
-(defun lisp-to-djvu-outline (lst)
+(defun simple-outline-to-djvu (lst)
   "Format a simplified LST to djvulibre outline format."
-  (interactive (list (sexp-at-point)))
-  (if (listp lst)
-      (djvu-outline-map lst
-                   (lambda (first second)
-                     (list first (format "#%d" second))))
-    (error "Last sexp is not a list!")))
+  (simple-outline-map
+   lst
+   (lambda (first second)
+     (list first (format "#%d" second)))))
 
 (defun simple-outline-shift (lst offset)
   "Shift OFFSET on each page number in simple outline LST."
-  (interactive (list (sexp-at-point)
-                     (read-number "Offset value: ")))
-  (if (listp lst)
-      (simple-outline-map
-       lst
-       (lambda (first second)
-         (list first (+ offset second))))
-    (error "Last sexp is not a list!")))
+  (simple-outline-map
+   lst
+   (lambda (first second)
+     (list first (+ offset second)))))
 
 (defmacro default-options (options &rest defaults)
   "A more elegant way to set default values for keyword arguments.
@@ -209,7 +195,7 @@ where
 
 Keyword OPTIONS:
 
-- :prefix is a regexp that matches prefix from the start of a
+- :prefix is a regexp that matches prefix from the begin of a
   line, the length of prefix should give correct level of current
   line, be aware that normally we should use passive matching for
   prefix.
@@ -232,10 +218,10 @@ Keyword OPTIONS:
     ((regexp (format "^\\(%s\\)\\(.+*\\)%s\\([0-9]+\\)$"
                      prefix separator)))
     (let ((lines (split-string s "\n" t))
-          (stack '()))
+          (stack '((-1 bookmarks))))
       (dolist (line lines)
         (when (string-match regexp line)
-          (let* ((level (match-string 1 line))
+          (let* ((level (length (match-string 1 line)))
                  (title (match-string 2 line))
                  (page (string-to-number (match-string 3 line)))
                  (item (list level title page)))
@@ -253,21 +239,17 @@ Keyword OPTIONS:
               ;; then we can push it on stack
               (push item stack)))
             )))
-      ;; final reduction as if a terminal of level 0 pushed in
+      ;; final reduction
       (while (>= (length stack) 2)
         (let ((child (pop stack)))
           (nconc (cdar stack) (list (cdr child)))))
-      ;; compose result
-      (cons 'bookmarks
-            (mapcar (lambda (item) (cdr item))
-                    stack)))
-    )))
+      ;; return stack top
+      (cdar stack)))))
 
-(defun toc-to-lisp (start end)
-  "Convert a ToC between START and END to a simple outline."
-  (interactive "r")
+(defun toc-to-lisp (begin end)
+  "Convert a ToC between BEGIN and END to a simple outline."
   (toc-to-simple-outline
-   (buffer-substring-no-properties start end)))
+   (buffer-substring-no-properties begin end)))
 
 (defun simple-outline-to-toc (lst func level)
   "Call FUNC on each (LEVEL title number) trituple in simple outline LST.
@@ -311,7 +293,6 @@ Keyword OPTIONS:
   including newline.
 
 - :level (default 0) set the top ToC level."
-  (interactive (list (sexp-at-point)))
   (let-defaults
    options
    ((level 0)
@@ -322,6 +303,65 @@ Keyword OPTIONS:
    (if (listp lst)
        (simple-outline-to-toc lst formatter (1- level))
      (error "Last sexp is not a list!"))))
+
+(defmacro toc-glue:def-interactive (f &optional binds body)
+  "Define an interactive function based on given function F.
+
+By default, the function simply pretty-print to current buffer.
+With a prefixed argument, it prompts for a buffer to output.
+
+plist BINDS will be passed to `interactive'.
+
+If procedure BODY is given, it will be invoked before print the
+output of F."
+  (let ((arglist (mapcar (lambda (desc) (car desc)) binds)))
+    `(defun ,(intern (concat "toc-glue:" (symbol-name f)))
+         ;; arglist
+         (,@arglist &optional sel-buf-p)
+       ;; docstring
+       ,(concat
+         "An interactive encapsulation produced by `toc-glue:def-interactive'\n"
+         (format "Documentation of %s:\n" (symbol-name f))
+         (documentation f))
+       (interactive (list
+                     ,@(mapcar (lambda (desc) (cadr desc)) binds)
+                     current-prefix-arg))
+       (let ((buf (if sel-buf-p
+                      (read-buffer "Output to buffer: ")
+                    (buffer-name)))
+             (output (,f ,@arglist)))
+         (when sel-buf-p ,body)
+         (pp output (get-buffer buf)))
+       )))
+
+(toc-glue:def-interactive toc-to-lisp
+                          ((begin (region-beginning))
+                           (end (region-end)))
+                          (kill-region begin end))
+
+(defmacro toc-glue:sexp-interact (f &optional binds)
+  "An alias of `toc-glue:def-interactive' that specialized for sexp.
+The first argument of F is always binded to `sexp-at-point'.
+
+By default, the function replaces last sexp with output of F,
+
+plist BINDS will be passed to `interactive'."
+  (macroexpand
+   `(toc-glue:def-interactive ,f
+                              ((sexp (sexp-at-point)) ,@binds)
+                              (backward-kill-sexp))))
+
+(toc-glue:sexp-interact djvu-outline-shift
+                        ((offset (read-number "Offset value: "))))
+
+(toc-glue:sexp-interact djvu-outline-simplify)
+
+(toc-glue:sexp-interact simple-outline-shift
+                        ((offset (read-number "Offset value: "))))
+
+(toc-glue:sexp-interact simple-outline-to-djvu)
+
+(toc-glue:sexp-interact lisp-to-toc)
 
 (provide 'toc-glue)
 
