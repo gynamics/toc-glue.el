@@ -320,9 +320,11 @@ output of F."
          (,@arglist &optional sel-buf-p)
        ;; docstring
        ,(concat
-         "An interactive encapsulation produced by `toc-glue:def-interactive'\n"
-         (format "Documentation of %s:\n" (symbol-name f))
-         (documentation f))
+         ;; cut the first line of original function
+         (let ((str (documentation f)))
+           (substring str 0 (or (string-match "\n" str) (length str))))
+         "\n\nThis function is produced by `toc-glue:def-interactive'\n"
+         "With a universal prefix, it prompts for a buffer to output.")
        (interactive (list
                      ,@(mapcar (lambda (desc) (cadr desc)) binds)
                      current-prefix-arg))
