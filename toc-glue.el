@@ -195,24 +195,21 @@ where
 
 Keyword OPTIONS:
 
-- :prefix is a regexp that matches prefix from the begin of a
-  line, the length of prefix should give correct level of current
-  line, be aware that normally we should use passive matching for
-  prefix.
+- :prefix is a regexp that matches prefix from the begin of a line, the
+  length of prefix should give correct level of current line, be aware
+  that normally we should use passive matching for prefix.  It should
+  not include any \\(...\\) which breaks match order
 
-- :separator (default \"\\s+\") a regexp that matches separators
-  between title and page, it should not include any \\(...\\)
-  which breaks match order.
+- :separator is a regexp that matches separators between title and page.
+  It should not include any \\(...\\) which breaks match order.
 
-- :regexp (default
-  \"^\\\\(\\s+*\\\\)\\\\(.+*\\\\)\\s+\\\\([0-9]+\\\\)$\") allows
-  you to overwrite the whole regexp without respecting values of
-  :prefix and :separator, please make sure it matches exactly
+- :regexp allows you to overwrite the whole regexp without respecting
+  values of :prefix and :separator, please make sure it matches exactly
   three \\(...\\) cells as explained above."
   (let-defaults
    options
-   ((prefix "\s+*")
-    (separator "\s+"))
+   ((prefix "\s*\\(?:[0-9][.\s]*\\)+*")
+    (separator "[.⋅\s]+"))
    (let-defaults
     options
     ((regexp (format "^\\(%s\\)\\(.+*\\)%s\\([0-9]+\\)$"
@@ -282,8 +279,9 @@ Different from `simple-outline-map', The output is serialized."
   "Repeat STR for N times, SEPARATOR for padding intervals."
   (mapconcat (lambda (_) str) (number-sequence 0 n) separator))
 
-(defun lisp-to-toc (lst &rest options)
-  "Convert simple outline LST to a ToC.
+(defun lisp-to-toc (s &rest options)
+  "Convert simple outline string S to a ToC.
+All sexps in the input string should be closed.
 This function returns a whole ToC string, use `insert' to use it.
 
 Keyword OPTIONS:
@@ -300,9 +298,17 @@ Keyword OPTIONS:
      (lambda (level title page)
            (format "%s \"%s\" %s\n"
                    (string-repeat (1- level) "  " "") title page))))
-   (if (listp lst)
-       (simple-outline-to-toc lst formatter (1- level))
-     (error "Last sexp is not a list!"))))
+   (let ((res)
+         (pos 0))
+     (while (< pos (length s))
+       (let* ((m (read-from-string pos))
+              (sexp (car m))
+              (next-pos (cadr m)))
+         (if (listp sexp)
+             (push (simple-outline-to-toc sexp formatter (1- level)) res)
+           (error "sexp read error at %d!" pos))
+         (setq pos next-pos)))
+     (mapconcat 'identity res))))
 
 (defmacro toc-glue:def-interactive (f &optional binds body)
   "Define an interactive function based on given function F.
@@ -313,7 +319,7 @@ With a prefixed argument, it prompts for a buffer to output.
 plist BINDS will be passed to `interactive'.
 
 If procedure BODY is given, it will be invoked before print the
-output of F."
+output of F if no prefix argument is given."
   (let ((arglist (mapcar (lambda (desc) (car desc)) binds)))
     `(defun ,(intern (concat "toc-glue:" (symbol-name f)))
          ;; arglist
@@ -332,7 +338,7 @@ output of F."
                       (read-buffer "Output to buffer: ")
                     (buffer-name)))
              (output (,f ,@arglist)))
-         (when sel-buf-p ,body)
+         (unless sel-buf-p ,body)
          (pp output (get-buffer buf)))
        )))
 
