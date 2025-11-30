@@ -2,7 +2,7 @@
 
 ;; Author: gynamics
 ;; Maintainer: gynamics
-;; Package-Version: 0.1
+;; Package-Version: 0.2
 ;; Package-Requires:
 ;; URL: https://github.com/gynamics/toc-glue.el
 ;; Keywords: tools
@@ -68,308 +68,313 @@
 ;;
 ;; This file also provides functions that converts between ToC format
 ;; and simple outline format.
+;;
+;; Unluckily, currently it can not generate autoloads of commands automatically.
+;; If you want to defer loading of this package, you will need to write them
+;; manually.
 
 ;;; Code:
 
-(defun djvu-outline-map (lst func)
-  "Call FUNC on each (title number) pair in djvulibre outline LST."
+(defun djvu-outline-map (sexp func)
+  "Call FUNC on each (title number) pair in djvulibre outline SEXP."
   (cond
    ;; not a list
-   ((not (listp lst)) lst)
+   ((not (listp sexp)) sexp)
    ;; it starts from top-level
-   ((equal (car lst) 'bookmarks)
-    (cons (car lst)
+   ((equal (car sexp) 'bookmarks)
+    (cons (car sexp)
           (mapcar (lambda (item) (djvu-outline-map item func))
-                  (cdr lst))))
+                  (cdr sexp))))
    ;; if the list has at least two elements
-   ((and (>= (length lst) 2)
+   ((and (>= (length sexp) 2)
          ;; check if elements are valid
-         (stringp (cadr lst))
-         (string-match-p "^#[0-9]+$" (cadr lst)))
-    (let* ((first (car lst))
-           (second (cadr lst))
+         (stringp (cadr sexp))
+         (string-match-p "^#[0-9]+$" (cadr sexp)))
+    (let* ((first (car sexp))
+           (second (cadr sexp))
            (result (funcall func first second)))
       ;; construct a new list
       (cons (car result)
             (cons (cadr result)
                   (mapcar (lambda (item) (djvu-outline-map item func))
-                          (cddr lst))))))
+                          (cddr sexp))))))
    ;; Otherwise, raise an error
-   (t (error "Invalid outline structure, %S" lst))))
+   (t (error "Invalid outline structure, %S" sexp))))
 
-(defun djvu-outline-shift (lst offset)
-  "Add OFFSET to each page number in djvulibre outline LST."
-  (if (listp lst)
+(defun djvu-outline-shift (sexp offset)
+  "Add OFFSET to each page number in djvulibre outline SEXP."
+  (if (listp sexp)
       (djvu-outline-map
-       lst
+       sexp
        (lambda (first second)
          (list first
                (format "#%d"
-                       (+ offset
-                          (string-to-number
-                           (substring second 1)))))))
+                       (+ (string-to-number (substring second 1))
+                          offset)))))
     (error "Last sexp is not a list!")))
 
-(defun djvu-outline-simplify (lst)
-  "Simplify djvulibre outline LST to a simple outline."
+(defun djvu-outline-simplify (sexp)
+  "Simplify djvulibre outline SEXP to a simple outline."
   (djvu-outline-map
-   lst
+   sexp
    (lambda (first second)
      (list first
            (string-to-number (substring second 1))))))
 
-(defun simple-outline-map (lst func)
-  "Map FUNC to each (title number) pair in simple outline LST."
+(defun simple-outline-map (sexp func)
+  "Map FUNC to each (title number) pair in simple outline SEXP."
   (cond
    ;; not a list
-   ((not (listp lst)) lst)
+   ((not (listp sexp)) sexp)
    ;; it starts from top-level
-   ((equal (car lst) 'bookmarks)
-    (cons (car lst)
+   ((equal (car sexp) 'bookmarks)
+    (cons (car sexp)
           (mapcar (lambda (item) (simple-outline-map item func))
-                  (cdr lst))))
+                  (cdr sexp))))
    ;; if the list has at least two elements
-   ((and (>= (length lst) 2)
+   ((and (>= (length sexp) 2)
          ;; check if elements are valid
-         (stringp (car lst))
-         (numberp (cadr lst)))
-    (let* ((first (car lst))
-           (second (cadr lst))
+         (stringp (car sexp))
+         (numberp (cadr sexp)))
+    (let* ((first (car sexp))
+           (second (cadr sexp))
            (result (funcall func first second)))
       ;; construct a new list
       (cons (car result)
             (cons (cadr result)
                   (mapcar (lambda (item)
                             (simple-outline-map item func))
-                          (cddr lst))))))
+                          (cddr sexp))))))
    ;; Otherwise, raise an error
-   (t (error "Invalid simple outline structure, %S" lst))))
+   (t (error "Invalid simple outline structure, %S" sexp))))
 
-(defun simple-outline-to-djvu (lst)
-  "Format a simplified LST to djvulibre outline format."
+(defun simple-outline-to-djvu (sexp)
+  "Format a simplified SEXP to djvulibre outline format."
   (simple-outline-map
-   lst
+   sexp
    (lambda (first second)
      (list first (format "#%d" second)))))
 
-(defun simple-outline-shift (lst offset)
-  "Shift OFFSET on each page number in simple outline LST."
+(defun simple-outline-shift (sexp offset)
+  "Shift OFFSET on each page number in simple outline SEXP."
   (simple-outline-map
-   lst
+   sexp
    (lambda (first second)
      (list first (+ offset second)))))
 
-(defmacro default-options (options &rest defaults)
-  "A more elegant way to set default values for keyword arguments.
-This macro can be used to replace the let varlist.
+(defun toc-glue--default-lexer (line)
+  "Default lexer to analyze one LINE string in a ToC.
+It determine level by whitespaces before plus prefix length."
+  (let ((prefix "\\(\s*\\)\\([0-9]\\(\\.[0-9]+\\)*\\)?")
+        (title "\s*\\([^\s].*\\)")
+        (page "\s[\\.\s]*\\([0-9]+\\)"))
+    (when (string-match (concat prefix title page) line)
+      (list
+       ;; decide level by sum of leading spaces and section numbers
+       (+ (length (match-string 1 line))
+          (length (match-string 2 line)))
+       ;; section number ++ title
+       (concat (match-string 2 line) " " (match-string 4 line))
+       (string-to-number (match-string 5 line))))))
 
-OPTIONS is a plist of keyword arguments, usually given by &rest .
-DEFAULTS is an association list consists of (sym . value) pairs."
-  (mapcar (lambda (pair)
-            `(,(car pair)
-              (or (plist-get ,options
-                             ,(intern (concat ":" (symbol-name (car pair)))))
-                  ,(cadr pair))))
-          defaults))
-
-(defmacro let-defaults (options valist &rest body)
-  "A let helper for setting default values for keyword arguments.
-
-OPTIONS is a plist of keyword arguments, usually given by &rest .
-VALIST is a list of default values.
-BODY is the function body, given as it is to `let' ."
-  `(let (default-options ,options ,@valist) ,@body))
-
-(defun toc-to-simple-outline (s &rest options)
+(defun toc-to-simple-outline (s &optional lexer)
   "Convert given ToC string S to simple outline format.
-
-Each line of toc string is divided into four parts:
-
-\\(prefix\\) \\(title\\) separator \\(page\\)
-
-where
-  prefix gives level of current line; (e. g. indentation depth)
-  title gives a string as name tag;
-  separator matches the separator sequence between title and page;
-  page gives a number as referred position.
-
-Keyword OPTIONS:
-
-- :prefix is a regexp that matches prefix from the begin of a line, the
-  length of prefix should give correct level of current line, be aware
-  that normally we should use passive matching for prefix.  It should
-  not include any \\(...\\) which breaks match order
-
-- :separator is a regexp that matches separators between title and page.
-  It should not include any \\(...\\) which breaks match order.
-
-- :regexp allows you to overwrite the whole regexp without respecting
-  values of :prefix and :separator, please make sure it matches exactly
-  three \\(...\\) cells as explained above."
-  (let-defaults
-   options
-   ((prefix "\s*\\(?:[0-9][.\s]*\\)+*")
-    (separator "[.⋅\s]+"))
-   (let-defaults
-    options
-    ((regexp (format "^\\(%s\\)\\(.+*\\)%s\\([0-9]+\\)$"
-                     prefix separator)))
-    (let ((lines (split-string s "\n" t))
-          (stack '((-1 bookmarks))))
-      (dolist (line lines)
-        (when (string-match regexp line)
-          (let* ((level (length (match-string 1 line)))
-                 (title (match-string 2 line))
-                 (page (string-to-number (match-string 3 line)))
-                 (item (list level title page)))
-            (cond
-             ;; current line has deeper level, simply shift it in
-             ((or (null stack)
-                  (< (car (car stack)) level))
-              (push item stack))
-             ;; otherwise reduce on stack until we can shift it in
-             (t
-              (while (and (>= (length stack) 2)
-                          (>= (car (car stack)) level))
-                (let ((child (pop stack)))
-                  (nconc (cdar stack) (list (cdr child)))))
-              ;; then we can push it on stack
-              (push item stack)))
-            )))
-      ;; final reduction
-      (while (>= (length stack) 2)
-        (let ((child (pop stack)))
-          (nconc (cdar stack) (list (cdr child)))))
-      ;; return stack top
-      (cdar stack)))))
+LEXER may be given to replace the lexer function, which accepts one line
+string, return a list (level title page) of type (number string number).
+If analyze failed, return NIL."
+  (let ((lexer (or lexer #'toc-glue--default-lexer))
+        (lines (split-string s "\n" t))
+        (stack '((-1 bookmarks))))
+    (dolist (line lines)
+      (if-let ((item (funcall lexer line)))
+          (cond
+           ;; current line has deeper level, simply shift it in
+           ((or (null stack)
+                (< (car (car stack)) (car item)))
+            (push item stack))
+           ;; otherwise reduce on stack until we can shift it in
+           (t
+            (while (and (>= (length stack) 2)
+                        (>= (caar stack) (car item)))
+              (let ((child (pop stack)))
+                (nconc (cdar stack) (list (cdr child)))))
+            ;; then we can push it on stack
+            (push item stack)))
+        (error "Failed to parse ToC line: %s" line)))
+    ;; final reduction
+    (while (>= (length stack) 2)
+      (let ((child (pop stack)))
+        (nconc (cdar stack) (list (cdr child)))))
+    ;; return stack top
+    (cdar stack)))
 
 (defun toc-to-lisp (begin end)
   "Convert a ToC between BEGIN and END to a simple outline."
   (toc-to-simple-outline
    (buffer-substring-no-properties begin end)))
 
-(defun simple-outline-to-toc (lst func level)
-  "Call FUNC on each (LEVEL title number) trituple in simple outline LST.
+(defun simple-outline-to-toc (sexp func level)
+  "Call FUNC on each (LEVEL title number) trituple in simple outline SEXP.
 Different from `simple-outline-map', The output is serialized."
   (cond
    ;; not a list
-   ((not (listp lst)) "")
+   ((not (listp sexp)) "")
    ;; it starts from top-level
-   ((equal (car lst) 'bookmarks)
+   ((equal (car sexp) 'bookmarks)
     (mapconcat (lambda (item) (simple-outline-to-toc
                           item func (1+ level)))
-               (cdr lst) ""))
-   ((and (>= (length lst) 2)
+               (cdr sexp) ""))
+   ((and (>= (length sexp) 2)
            ;; check if elements are valid
-           (stringp (car lst))
-           (numberp (cadr lst)))
-      (let* ((first (car lst))
-             (second (cadr lst))
+           (stringp (car sexp))
+           (numberp (cadr sexp)))
+      (let* ((first (car sexp))
+             (second (cadr sexp))
              (result (funcall func level first second)))
         (concat
          result
          (mapconcat (lambda (item)
                       (simple-outline-to-toc
                        item func (1+ level)))
-                    (cddr lst) ""))))
+                    (cddr sexp) ""))))
    ;; Otherwise, raise an error
-   (t (error "Invalid simple outline structure, %S" lst))))
+   (t (error "Invalid simple outline structure, %S" sexp))))
 
 (defun string-repeat (n str &optional separator)
   "Repeat STR for N times, SEPARATOR for padding intervals."
   (mapconcat (lambda (_) str) (number-sequence 0 n) separator))
 
-(defun lisp-to-toc (s &rest options)
+(defun lisp-to-toc (s &optional top-level formatter)
   "Convert simple outline string S to a ToC.
 All sexps in the input string should be closed.
 This function returns a whole ToC string, use `insert' to use it.
 
-Keyword OPTIONS:
+FORMATTER [default (lambda (level title page) ...)] is a print function,
+it should return a string containing one ToC line, including newline.
 
-- :formatter (default (lambda (level title page) ...)) is a print
-  function, it should return a string containing one ToC line,
-  including newline.
-
-- :level (default 0) set the top ToC level."
-  (let-defaults
-   options
-   ((level 0)
-    (formatter
-     (lambda (level title page)
-           (format "%s \"%s\" %s\n"
-                   (string-repeat (1- level) "  " "") title page))))
-   (let ((res)
-         (pos 0))
-     (while (< pos (length s))
+TOP-LEVEL [default 0] set the top ToC level."
+  (let ((top-level (or top-level 0))
+        (formatter
+         (or formatter
+             (lambda (level title page)
+               (format "%s \"%s\" %s\n"
+                       (string-repeat (1- level) "  " "") title page)))))
+    (let ((res)
+          (pos 0))
+      (while (< pos (length s))
        (let* ((m (read-from-string pos))
               (sexp (car m))
               (next-pos (cadr m)))
          (if (listp sexp)
-             (push (simple-outline-to-toc sexp formatter (1- level)) res)
-           (error "sexp read error at %d!" pos))
+             (push (simple-outline-to-toc sexp formatter (1- top-level)) res)
+           (error "Failed to read sexp at %s:%d!" s pos))
          (setq pos next-pos)))
-     (mapconcat 'identity res))))
+      (mapconcat 'identity res))))
 
-(defmacro toc-glue:def-interactive (f &optional binds body)
+(defmacro toc-glue:def-interact (f &optional binds body)
   "Define an interactive function based on given function F.
-
-By default, the function simply pretty-print to current buffer.
-With a prefixed argument, it prompts for a buffer to output.
 
 plist BINDS will be passed to `interactive'.
 
-If procedure BODY is given, it will be invoked before print the
-output of F if no prefix argument is given."
+If procedure BODY is given, it will be invoked after calling F,
+the output of F will be bound to lexical variable \\[output]."
   (let ((arglist (mapcar (lambda (desc) (car desc)) binds)))
-    `(defun ,(intern (concat "toc-glue:" (symbol-name f)))
-         ;; arglist
-         (,@arglist &optional sel-buf-p)
+    `(defun ,(intern (concat "toc-glue:" (symbol-name f))) (,@arglist)
        ;; docstring
        ,(concat
          ;; cut the first line of original function
          (let ((str (documentation f)))
            (substring str 0 (or (string-match "\n" str) (length str))))
-         "\n\nThis function is produced by `toc-glue:def-interactive'\n"
+         "\n\nThis function is produced by `toc-glue:def-interact'\n"
          "With a universal prefix, it prompts for a buffer to output.")
-       (interactive (list
-                     ,@(mapcar (lambda (desc) (cadr desc)) binds)
-                     current-prefix-arg))
-       (let ((buf (if sel-buf-p
-                      (read-buffer "Output to buffer: ")
-                    (buffer-name)))
-             (output (,f ,@arglist)))
-         (unless sel-buf-p ,body)
-         (pp output (get-buffer buf)))
-       )))
+       (interactive (list ,@(mapcar (lambda (desc) (cadr desc)) binds)))
+       (let ((output (,f ,@arglist)))
+         ,body))))
 
-(toc-glue:def-interactive toc-to-lisp
-                          ((begin (region-beginning))
-                           (end (region-end)))
-                          (kill-region begin end))
-
-(defmacro toc-glue:sexp-interact (f &optional binds)
-  "An alias of `toc-glue:def-interactive' that specialized for sexp.
+(defmacro toc-glue:def-interact-s (f &optional binds)
+  "An alias of `toc-glue:def-interact' that specialized for sexp.
 The first argument of F is always binded to `sexp-at-point'.
 
 By default, the function replaces last sexp with output of F,
+With a prefixed argument, it prompts for a buffer to output.
 
 plist BINDS will be passed to `interactive'."
   (macroexpand
-   `(toc-glue:def-interactive ,f
-                              ((sexp (sexp-at-point)) ,@binds)
-                              (backward-kill-sexp))))
+   `(toc-glue:def-interact
+     ,f
+     ((sexp (sexp-at-point)) ,@binds)
+     (let ((buf (if current-prefix-arg
+                    (read-buffer "Output to buffer: ")
+                  (buffer-name))))
+       (if current-prefix-arg
+           (display-buffer buf)
+           (backward-kill-sexp))
+       (pp output (get-buffer buf))))))
 
-(toc-glue:sexp-interact djvu-outline-shift
-                        ((offset (read-number "Offset value: "))))
+(toc-glue:def-interact-s
+ djvu-outline-shift ((offset (read-number "Offset value: "))))
 
-(toc-glue:sexp-interact djvu-outline-simplify)
+(toc-glue:def-interact-s
+ simple-outline-shift ((offset (read-number "Offset value: "))))
 
-(toc-glue:sexp-interact simple-outline-shift
-                        ((offset (read-number "Offset value: "))))
+(defmacro toc-glue:def-interact-t (f &optional binds prefix mode)
+  "An alias of `toc-glue:def-interact' that specialized for translation.
+The output of F is always pretty printed to a buffer.
 
-(toc-glue:sexp-interact simple-outline-to-djvu)
+By default, the function pretty-print to a temporary buffer.
+With a prefixed argument, it prompts for a buffer to output.
 
-(toc-glue:sexp-interact lisp-to-toc)
+plist BINDS will be passed to `interactive'.
+
+string PREFIX will be used for constructing temporary buffer name.
+
+Enable MODE in temporary buffer."
+  (macroexpand
+   `(toc-glue:def-interact
+     ,f ,binds
+     (pp output
+         (or (when current-prefix-arg
+               (read-buffer "Output to buffer: "))
+             (let ((buf
+                    (get-buffer-create
+                     (concat ,prefix " - " (format-time-string "%Y%m%d%H%M%S*")))))
+               (with-current-buffer buf (,mode))
+               (display-buffer buf)
+               buf))))))
+
+(toc-glue:def-interact-t
+ toc-to-lisp ((begin (region-beginning)) (end (region-end)))
+ "Simple Outline" toc-glue-mode)
+
+(toc-glue:def-interact-t
+ lisp-to-toc ((sexp (sexp-at-point)))
+ "ToC" toc-mode)
+
+(toc-glue:def-interact-t
+ djvu-outline-simplify ((sexp (sexp-at-point)))
+ "Simple Outline" toc-glue-mode)
+
+(toc-glue:def-interact-t
+ simple-outline-to-djvu ((sexp (sexp-at-point)))
+ "DjVu Outline" toc-glue-djvu-mode)
+
+;;;###autoload
+(define-derived-mode toc-mode fundamental-mode "ToC"
+  "Major mode for editing ToC outline."
+  (define-key toc-mode-map (kbd "C-c C-c") #'toc-glue:toc-to-lisp))
+
+;;;###autoload
+(define-derived-mode toc-glue-mode lisp-data-mode "ToC Glue (Lisp)"
+  "Major mode for editing simple outline."
+  (define-key toc-glue-mode-map (kbd "C-c >") #'toc-glue:simple-outline-shift)
+  (define-key toc-glue-mode-map (kbd "C-c C-t") #'toc-glue:lisp-to-toc)
+  (define-key toc-glue-mode-map (kbd "C-c C-c") #'toc-glue:simple-outline-to-djvu))
+
+;;;###autoload
+(define-derived-mode toc-glue-djvu-mode lisp-data-mode "ToC Glue (DjVu)"
+  "Major mode for editing simple outline."
+  (define-key toc-glue-djvu-mode-map (kbd "C-c >") #'toc-glue:djvu-outline-shift)
+  (define-key toc-glue-djvu-mode-map (kbd "C-c C-c") #'toc-glue:djvu-outline-simplify))
 
 (provide 'toc-glue)
 
